@@ -63,7 +63,21 @@ class Image_Compressor {
             true
         );
 
-        // Localize JavaScript for AJAX calls
+        // Enqueue DataTables CSS and JS
+        wp_enqueue_style(
+            'datatables-css', 
+            'https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css'
+        );
+
+        wp_enqueue_script(
+            'datatables-js', 
+            'https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js', 
+            ['jquery'], 
+            null, 
+            true
+        );
+
+        // Localize script for AJAX
         wp_localize_script('image-compressor-js', 'imageCompressor', [
             'ajaxUrl' => admin_url('admin-ajax.php'),
             'nonce'   => wp_create_nonce('image_compressor_nonce'),
@@ -74,23 +88,26 @@ class Image_Compressor {
      * Render the admin dashboard page for the Image Compressor plugin.
      */
     public function render_dashboard() {
-        // Check if there are images in the media library
+        // Query the media library for supported image files
         $args = [
             'post_type'      => 'attachment',
-            'post_mime_type' => ['image/jpeg', 'image/png', 'image/gif'],
+            'post_mime_type' => ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
             'post_status'    => 'inherit',
             'posts_per_page' => -1,
         ];
-    
+
         $images = new WP_Query($args);
-    
+
+        // Display a warning if no images are found
         if (!$images->have_posts()) {
             echo '<div class="notice notice-warning"><p>No images found in the media library.</p></div>';
             return;
         }
-    
+
         // Include the dashboard template
         include IMAGE_COMPRESSOR_PLUGIN_DIR . 'templates/admin-dashboard.php';
     }
-    
 }
+
+// Initialize the plugin
+new Image_Compressor();

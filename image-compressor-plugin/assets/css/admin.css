@@ -21,6 +21,18 @@
     padding: 0 5px;
     color: #8C8627;
 }
+.table-wrapper {
+    overflow-x: auto;
+}
+
+#image-table {
+    width: 100%;
+    margin-top: 20px;
+}
+
+.compress-btn, .replace-btn {
+    margin: 5px;
+}
 
 
 /* Table Styles */
@@ -162,4 +174,26 @@ a[data-lightbox="image-preview"] img:hover {
     font-weight: bold;
     margin-left: 10px;
     color: #333;
+}
+/* Top Bar Styling */
+.top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: linear-gradient(145deg, #D9B036, #F28B30);
+    color: #FFFFFF; /* Ensures readability over the gradient */
+    font-weight: bold;
+    padding: 15px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    box-shadow: 5px 5px 10px #8C8627, -5px -5px 10px #D9B036; /* Matching shadow depth */
+}
+
+/* Styling for individual items in the top bar */
+.top-bar span {
+    font-size: 16px;
+    font-family: 'Arial', sans-serif;
+}
+.table-wrapper {
+    overflow-x: auto;
 }

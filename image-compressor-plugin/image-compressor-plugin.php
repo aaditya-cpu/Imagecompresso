@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Image Compressor Plugin
  * Description: Compress and manage images directly within the WordPress media library.
- * Version: 1.3.0
+ * Version: 1.9.0
  * Author: Aaditya Goenka
  * License: GPL-2.0+
  */

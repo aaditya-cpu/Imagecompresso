@@ -64,7 +64,21 @@ class Image_Compressor {
             true
         );
 
-        // Localize JavaScript for AJAX calls
+        // Enqueue DataTables CSS and JS
+        wp_enqueue_style(
+            'datatables-css', 
+            'https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css'
+        );
+
+        wp_enqueue_script(
+            'datatables-js', 
+            'https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js', 
+            ['jquery'], 
+            null, 
+            true
+        );
+
+        // Localize script for AJAX
         wp_localize_script('image-compressor-js', 'imageCompressor', [
             'ajaxUrl' => admin_url('admin-ajax.php'),
             'nonce'   => wp_create_nonce('image_compressor_nonce'),
@@ -75,10 +89,29 @@ class Image_Compressor {
      * Render the admin dashboard page for the Image Compressor plugin.
      */
     public function render_dashboard() {
+        // Query the media library for supported image files
+        $args = [
+            'post_type'      => 'attachment',
+            'post_mime_type' => ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+            'post_status'    => 'inherit',
+            'posts_per_page' => -1,
+        ];
+
+        $images = new WP_Query($args);
+
+        // Display a warning if no images are found
+        if (!$images->have_posts()) {
+            echo '<div class="notice notice-warning"><p>No images found in the media library.</p></div>';
+            return;
+        }
+
         // Include the dashboard template
         include IMAGE_COMPRESSOR_PLUGIN_DIR . 'templates/admin-dashboard.php';
     }
 }
+
+// Initialize the plugin
+new Image_Compressor();
 
 
 ===== image-compressor-plugin/includes/class-image-handler.php =====
@@ -86,54 +119,99 @@ class Image_Compressor {
 if (!defined('ABSPATH')) exit;
 
 class Image_Handler {
+    /**
+     * Compress the provided image file.
+     *
+     * @param string $image_path Path to the image file.
+     * @param int $quality Compression quality (10-100).
+     * @return string|false Compressed image data or false on failure.
+     */
     public static function compress_image($image_path, $quality) {
+        // Validate image path
+        if (!file_exists($image_path) || !is_readable($image_path)) {
+            error_log('Image compression error: Invalid or unreadable file path.');
+            return false;
+        }
+
+        // Get image information
         $info = getimagesize($image_path);
-        if (!$info || !isset($info['mime'])) return false;
+        if (!$info || !isset($info['mime'])) {
+            error_log('Image compression error: Unsupported image format.');
+            return false;
+        }
 
         $mime = $info['mime'];
         $image = null;
 
-        switch ($mime) {
-            case 'image/jpeg':
-                $image = imagecreatefromjpeg($image_path);
-                ob_start();
-                imagejpeg($image, null, $quality);
-                break;
-            case 'image/png':
-                $image = imagecreatefrompng($image_path);
-                ob_start();
-                imagepng($image);
-                break;
-            case 'image/gif':
-                $image = imagecreatefromgif($image_path);
-                ob_start();
-                imagegif($image);
-                break;
-            default:
-                return false; // Unsupported format
+        // Handle supported image formats
+        try {
+            switch ($mime) {
+                case 'image/jpeg':
+                    $image = imagecreatefromjpeg($image_path);
+                    ob_start();
+                    imagejpeg($image, null, $quality);
+                    break;
+
+                case 'image/png':
+                    $image = imagecreatefrompng($image_path);
+                    ob_start();
+                    imagepng($image, round($quality / 10)); // PNG compression level (0-9)
+                    break;
+
+                case 'image/gif':
+                    $image = imagecreatefromgif($image_path);
+                    ob_start();
+                    imagegif($image);
+                    break;
+
+                case 'image/webp':
+                    $image = imagecreatefromwebp($image_path);
+                    ob_start();
+                    imagewebp($image, null, $quality); // WebP compression
+                    break;
+
+                default:
+                    error_log('Image compression error: Unsupported MIME type.');
+                    return false; // Unsupported format
+            }
+        } catch (Exception $e) {
+            error_log('Image compression error: ' . $e->getMessage());
+            return false; // Handle unexpected errors
         }
 
         $compressed_data = ob_get_clean();
-        imagedestroy($image);
+        if ($image) {
+            imagedestroy($image);
+        }
 
         return $compressed_data;
     }
 
+    /**
+     * Handle AJAX request for image compression.
+     */
     public static function handle_ajax_request() {
+        // Verify nonce for security
         check_ajax_referer('image_compressor_nonce', 'security');
 
+        // Sanitize and validate inputs
         $image_id = intval($_POST['image_id']);
         $quality = intval($_POST['quality']);
         $replace = isset($_POST['replace']) && $_POST['replace'] === 'true';
 
-        if ($quality < 10 || $quality > 100) {
-            wp_send_json_error(['message' => 'Quality must be between 10 and 100.']);
+        if ($image_id <= 0 || $quality < 10 || $quality > 100) {
+            wp_send_json_error(['message' => 'Invalid parameters provided.']);
             return;
         }
 
         $image_path = sanitize_text_field(get_attached_file($image_id));
-        if (!file_exists($image_path)) {
-            wp_send_json_error(['message' => 'File does not exist.']);
+        if (!$image_path || !file_exists($image_path) || !is_readable($image_path)) {
+            wp_send_json_error(['message' => 'File does not exist or is unreadable.']);
+            return;
+        }
+
+        if ($replace && !is_writable($image_path)) {
+            wp_send_json_error(['message' => 'File is not writable. Check permissions.']);
             return;
         }
 
@@ -141,41 +219,46 @@ class Image_Handler {
         $compressed_data = self::compress_image($image_path, $quality);
 
         if ($compressed_data) {
-            // Replace the original file
-            if ($replace) {
-                file_put_contents($image_path, $compressed_data);
-                clearstatcache(true, $image_path); // Clear file cache
-                $new_size = filesize($image_path);
+            try {
+                if ($replace) {
+                    // Replace original file
+                    file_put_contents($image_path, $compressed_data);
+                    clearstatcache(true, $image_path);
+                    $new_size = filesize($image_path);
 
-                // Update WordPress metadata to refresh the file details
-                wp_update_attachment_metadata($image_id, wp_generate_attachment_metadata($image_id, $image_path));
+                    wp_update_attachment_metadata($image_id, wp_generate_attachment_metadata($image_id, $image_path));
 
-                wp_send_json_success([
-                    'message'       => 'File replaced successfully.',
-                    'original_size' => size_format($original_size),
-                    'new_size'      => size_format($new_size),
-                    'saved_space'   => size_format($original_size - $new_size)
-                ]);
-            } else {
-                // Save compressed file alongside original if not replacing
-                $new_path = pathinfo($image_path, PATHINFO_DIRNAME) . '/' . pathinfo($image_path, PATHINFO_FILENAME) . '-compressed.' . pathinfo($image_path, PATHINFO_EXTENSION);
-                file_put_contents($new_path, $compressed_data);
-                $new_size = filesize($new_path);
+                    wp_send_json_success([
+                        'message'       => 'File replaced successfully.',
+                        'original_size' => size_format($original_size),
+                        'new_size'      => size_format($new_size),
+                        'saved_space'   => size_format($original_size - $new_size),
+                        'new_file_url'  => wp_get_attachment_url($image_id),
+                    ]);
+                } else {
+                    // Save compressed file alongside the original
+                    $new_path = pathinfo($image_path, PATHINFO_DIRNAME) . '/' . pathinfo($image_path, PATHINFO_FILENAME) . '-compressed.' . pathinfo($image_path, PATHINFO_EXTENSION);
+                    file_put_contents($new_path, $compressed_data);
+                    $new_size = filesize($new_path);
 
-                wp_send_json_success([
-                    'message'       => 'File compressed successfully.',
-                    'original_size' => size_format($original_size),
-                    'new_size'      => size_format($new_size),
-                    'saved_space'   => size_format($original_size - $new_size),
-                    'new_file_url'  => wp_get_attachment_url($image_id)
-                ]);
+                    wp_send_json_success([
+                        'message'       => 'File compressed successfully.',
+                        'original_size' => size_format($original_size),
+                        'new_size'      => size_format($new_size),
+                        'saved_space'   => size_format($original_size - $new_size),
+                        'new_file_url'  => str_replace(basename($image_path), basename($new_path), wp_get_attachment_url($image_id)),
+                    ]);
+                }
+            } catch (Exception $e) {
+                wp_send_json_error(['message' => 'Error saving compressed file: ' . $e->getMessage()]);
             }
         } else {
-            wp_send_json_error(['message' => 'Compression failed.']);
+            wp_send_json_error(['message' => 'Compression failed. Unsupported format or processing error.']);
         }
     }
 }
 
+// Register AJAX handler
 add_action('wp_ajax_compress_image', ['Image_Handler', 'handle_ajax_request']);
 
 
@@ -184,7 +267,7 @@ add_action('wp_ajax_compress_image', ['Image_Handler', 'handle_ajax_request']);
 /**
  * Plugin Name: Image Compressor Plugin
  * Description: Compress and manage images directly within the WordPress media library.
- * Version: 1.3.0
+ * Version: 1.9.0
  * Author: Aaditya Goenka
  * License: GPL-2.0+
  */
@@ -209,74 +292,113 @@ add_action('plugins_loaded', 'image_compressor_init');
 <div class="image-compressor-dashboard">
     <h1>Image Compressor</h1>
     <p>Select images to compress. Adjust the quality slider and review changes before replacing the original image.</p>
+
+    <!-- Top Bar -->
+    <div class="top-bar">
+        <span id="total-size">Total Size: Calculating...</span>
+        <span id="saved-space">Saved Space: 0 KB</span>
+    </div>
+
     <div id="loading-spinner" style="display:none;">Processing...</div>
 
-    <table id="image-table">
-        <thead>
-            <tr>
-                <th>Preview (Before)</th>
-                <th>Preview (After)</th>
-                <th>File Name</th>
-                <th>Current Size</th>
-                <th>New Size</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            <?php
-            $args = [
-                'post_type'      => 'attachment',
-                'post_mime_type' => ['image/jpeg', 'image/png', 'image/gif'],
-                'post_status'    => 'inherit',
-                'posts_per_page' => -1,
-            ];
+    <!-- Master Slider for Bulk Compression -->
+    <div class="master-slider-container">
+        <label for="master-quality-slider">Set Compression Quality for All:</label>
+        <input type="range" id="master-quality-slider" min="10" max="100" value="80">
+        <span id="master-quality-value">80</span>
+    </div>
 
-            $images = new WP_Query($args);
+    <!-- Size Filter -->
+    <div class="filter-container">
+        <label for="size-filter">Filter by Size:</label>
+        <select id="size-filter">
+            <option value="all">All Sizes</option>
+            <option value="small">Small (< 100 KB)</option>
+            <option value="medium">Medium (100 KB - 1 MB)</option>
+            <option value="large">Large (> 1 MB)</option>
+        </select>
+        <button id="apply-filter">Apply Filter</button>
+    </div>
 
-            if ($images->have_posts()) :
-                while ($images->have_posts()) : $images->the_post();
-                    $image_id = get_the_ID();
-                    $image_url = wp_get_attachment_url($image_id);
-                    $image_path = get_attached_file($image_id);
-                    $image_size = file_exists($image_path) ? filesize($image_path) : 0;
-            ?>
-                    <tr>
-                        <!-- Original Image Preview -->
-                        <td>
-                            <a href="<?php echo esc_url($image_url); ?>" data-lightbox="pre-compression-<?php echo $image_id; ?>" data-title="Original Image">
-                                <img src="<?php echo esc_url($image_url); ?>" alt="Original Image" style="max-width: 100px;">
-                            </a>
-                        </td>
-                        <!-- Placeholder for Compressed Image Preview -->
-                        <td class="post-compression-preview-<?php echo $image_id; ?>">
-                            <span>No compressed image yet.</span>
-                        </td>
-                        <td><?php the_title(); ?></td>
-                        <td><?php echo size_format($image_size); ?></td>
-                        <td class="new-size">-</td>
-                        <td>
-                            <div class="slider-container">
-                                <span class="slider-label">-</span>
-                                <input type="range" id="quality-slider-<?php echo $image_id; ?>" min="10" max="100" value="80" class="quality-slider">
-                                <span class="slider-label">+</span>
-                            </div>
-                            <button class="compress-btn" data-id="<?php echo $image_id; ?>">Compress</button>
-                            <button class="replace-btn" data-id="<?php echo $image_id; ?>">Replace Original</button>
-                        </td>
-                    </tr>
-            <?php
-                endwhile;
-            else :
-            ?>
+    <!-- Bulk Compress and Replace Buttons -->
+    <div class="bulk-action-container">
+        <button id="bulk-compress-btn" disabled>Bulk Compress</button>
+        <button id="bulk-replace-btn" disabled>Bulk Replace</button>
+    </div>
+
+    <div class="table-wrapper">
+        <table id="image-table" class="display">
+            <thead>
                 <tr>
-                    <td colspan="6">No images found in the media library.</td>
+                    <th><input type="checkbox" id="select-all"></th>
+                    <th>Preview (Before)</th>
+                    <th>Preview (After)</th>
+                    <th>File Name</th>
+                    <th>Current Size</th>
+                    <th>New Size</th>
+                    <th>Actions</th>
                 </tr>
-            <?php
-            endif;
-            wp_reset_postdata();
-            ?>
-        </tbody>
-    </table>
+            </thead>
+            <tbody>
+                <?php
+                $args = [
+                    'post_type'      => 'attachment',
+                    'post_mime_type' => ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+                    'post_status'    => 'inherit',
+                    'posts_per_page' => -1,
+                ];
+
+                $images = new WP_Query($args);
+
+                if ($images->have_posts()) :
+                    while ($images->have_posts()) : $images->the_post();
+                        $image_id = get_the_ID();
+                        $image_url = wp_get_attachment_url($image_id);
+                        $image_path = get_attached_file($image_id);
+                        $image_size = file_exists($image_path) ? filesize($image_path) : 0;
+
+                        // Sanitize and format values
+                        $image_url_esc = esc_url($image_url);
+                        $image_title_esc = esc_html(get_the_title());
+                        $image_size_human = size_format($image_size);
+                ?>
+                        <tr data-size="<?php echo $image_size; ?>">
+                            <td><input type="checkbox" class="image-select" data-id="<?php echo $image_id; ?>"></td>
+                            <td>
+                                <a href="<?php echo $image_url_esc; ?>" data-lightbox="pre-compression-<?php echo $image_id; ?>" data-title="Original Image">
+                                    <img src="<?php echo $image_url_esc; ?>" alt="Original Image" style="max-width: 100px;">
+                                </a>
+                            </td>
+                            <td class="post-compression-preview-<?php echo $image_id; ?>">
+                                <span>No compressed image yet.</span>
+                            </td>
+                            <td><?php echo $image_title_esc; ?></td>
+                            <td class="current-size"><?php echo $image_size_human; ?></td>
+                            <td class="new-size">-</td>
+                            <td>
+                                <div class="slider-container">
+                                    <span class="slider-label">-</span>
+                                    <input type="range" id="quality-slider-<?php echo $image_id; ?>" min="10" max="100" value="80" class="quality-slider">
+                                    <span class="slider-label">+</span>
+                                </div>
+                                <button class="compress-btn" data-id="<?php echo $image_id; ?>">Compress</button>
+                                <button class="replace-btn" data-id="<?php echo $image_id; ?>">Replace Original</button>
+                            </td>
+                        </tr>
+                <?php
+                    endwhile;
+                else :
+                ?>
+                    <tr>
+                        <td colspan="7">No images found in the media library.</td>
+                    </tr>
+                <?php
+                endif;
+                wp_reset_postdata();
+                ?>
+            </tbody>
+        </table>
+    </div>
 </div>
 
 
@@ -286,90 +408,28 @@ jQuery(document).ready(function ($) {
     const hideLoading = () => $('#loading-spinner').hide();
 
     /**
-     * Handle compression and generate preview.
+     * Update the top bar with total size and saved space.
      */
-    $(document).on('click', '.compress-btn', function () {
-        const imageId = $(this).data('id');
-        const quality = $(`#quality-slider-${imageId}`).val();
+    const updateTopBar = () => {
+        let totalSize = 0;
+        let savedSpace = 0;
 
-        if (quality < 10 || quality > 100) {
-            alert('Quality must be between 10 and 100.');
-            return;
-        }
+        $('#image-table tbody tr').each(function () {
+            const currentSize = parseInt($(this).data('size'), 10) || 0;
+            const newSize = parseInt($(this).find('.new-size').text().replace(/[^0-9]/g, '') || 0, 10);
 
-        showLoading();
-        $.post(imageCompressor.ajaxUrl, {
-            action: 'compress_image',
-            security: imageCompressor.nonce,
-            image_id: imageId,
-            quality: quality,
-            replace: false
-        }, function (response) {
-            hideLoading();
-            if (response.success) {
-                const newSize = size_format(response.data.new_size);
-                const savedSpace = size_format(response.data.saved_space);
-                const newFileUrl = response.data.new_file_url;
-
-                // Update new size in the table
-                $(`button[data-id=${imageId}]`).closest('tr').find('.new-size').text(newSize);
-
-                // Update compressed image preview
-                const previewCell = $(`.post-compression-preview-${imageId}`);
-                previewCell.html(`
-                    <a href="${newFileUrl}" data-lightbox="post-compression-${imageId}" data-title="Compressed Image">
-                        <img src="${newFileUrl}" alt="Compressed Image" style="max-width: 100px;">
-                    </a>
-                `);
-
-                alert(`Image compressed successfully! Saved space: ${savedSpace}`);
-            } else {
-                alert('Error: ' + response.data.message);
+            totalSize += currentSize;
+            if (newSize) {
+                savedSpace += currentSize - newSize;
             }
         });
-    });
+
+        $('#total-size').text(`Total Size: ${size_format(totalSize)}`);
+        $('#saved-space').text(`Saved Space: ${size_format(savedSpace)}`);
+    };
 
     /**
-     * Replace original image with compressed version.
-     */
-    $(document).on('click', '.replace-btn', function () {
-        const imageId = $(this).data('id');
-        const quality = $(`#quality-slider-${imageId}`).val();
-
-        if (quality < 10 || quality > 100) {
-            alert('Quality must be between 10 and 100.');
-            return;
-        }
-
-        if (!confirm('Are you sure you want to replace the original image with the compressed version? This action cannot be undone.')) {
-            return;
-        }
-
-        showLoading();
-        $.post(imageCompressor.ajaxUrl, {
-            action: 'compress_image',
-            security: imageCompressor.nonce,
-            image_id: imageId,
-            quality: quality,
-            replace: true
-        }, function (response) {
-            hideLoading();
-            if (response.success) {
-                const newSize = size_format(response.data.new_size);
-                const savedSpace = size_format(response.data.saved_space);
-
-                // Update new size in the table
-                $(`button[data-id=${imageId}]`).closest('tr').find('.new-size').text(newSize);
-
-                alert(`Original image replaced successfully! Saved space: ${savedSpace}`);
-            } else {
-                alert('Error: ' + response.data.message);
-            }
-        });
-    });
-
-    /**
-     * Format size in human-readable format.
+     * Format file size into human-readable format.
      */
     const size_format = (bytes) => {
         if (bytes >= 1073741824) {
@@ -382,6 +442,151 @@ jQuery(document).ready(function ($) {
             return bytes + ' bytes';
         }
     };
+
+    /**
+     * Initialize DataTables.
+     */
+    const initializeTable = () => {
+        if ($.fn.DataTable.isDataTable('#image-table')) {
+            $('#image-table').DataTable().destroy(); // Destroy previous instance
+        }
+        $('#image-table').DataTable({
+            paging: true,
+            searching: true,
+            ordering: true,
+            responsive: true,
+            columnDefs: [{ orderable: false, targets: [0, 1, 2, 6] }],
+        });
+    };
+
+    // Initialize DataTables on page load
+    initializeTable();
+
+    /**
+     * Reinitialize DataTables and recalculate the top bar after updates.
+     */
+    const refreshUI = () => {
+        updateTopBar();
+        initializeTable(); // Reinitialize the table
+    };
+
+    /**
+     * Apply size filters.
+     */
+    $('#apply-filter').on('click', function () {
+        const filterValue = $('#size-filter').val();
+        $('#image-table tbody tr').each(function () {
+            const size = parseInt($(this).data('size'), 10) || 0;
+            if (
+                (filterValue === 'small' && size >= 100 * 1024) ||
+                (filterValue === 'medium' && (size < 100 * 1024 || size > 1024 * 1024)) ||
+                (filterValue === 'large' && size <= 1024 * 1024)
+            ) {
+                $(this).hide();
+            } else {
+                $(this).show();
+            }
+        });
+        refreshUI();
+    });
+
+    /**
+     * Master slider to set all quality sliders.
+     */
+    $('#master-quality-slider').on('input', function () {
+        const masterValue = $(this).val();
+        $('#master-quality-value').text(masterValue);
+        $('.quality-slider').val(masterValue);
+    });
+
+    /**
+     * Handle bulk compress and replace buttons.
+     */
+    $('#bulk-compress-btn').on('click', function () {
+        const selectedImages = $('.image-select:checked');
+        const imageIds = selectedImages.map(function () {
+            return $(this).data('id');
+        }).get();
+
+        compressImages(imageIds, false); // Compress only
+    });
+
+    $('#bulk-replace-btn').on('click', function () {
+        const selectedImages = $('.image-select:checked');
+        const imageIds = selectedImages.map(function () {
+            return $(this).data('id');
+        }).get();
+
+        compressImages(imageIds, true); // Replace original images
+    });
+
+    /**
+     * Compress selected images one by one.
+     */
+    const compressImages = (imageIds, replace) => {
+        if (imageIds.length === 0) {
+            alert(replace ? 'Bulk replacement completed!' : 'Bulk compression completed!');
+            refreshUI();
+            return;
+        }
+    
+        const imageId = imageIds.shift();
+        const quality = $('#master-quality-slider').val();
+    
+        showLoading();
+        $.post(imageCompressor.ajaxUrl, {
+            action: 'compress_image',
+            security: imageCompressor.nonce,
+            image_id: imageId,
+            quality: quality,
+            replace: replace,
+        }, function (response) {
+            hideLoading();
+            if (response.success) {
+                const newSize = size_format(response.data.new_size);
+                const savedSpace = size_format(response.data.saved_space);
+    
+                const row = $(`button[data-id=${imageId}]`).closest('tr');
+                row.find('.new-size').text(newSize);
+    
+                if (replace) {
+                    // Update the "before" preview with the new image
+                    const previewCell = row.find('a[data-lightbox^="pre-compression-"]');
+                    previewCell.attr('href', response.data.new_file_url);
+                    previewCell.find('img').attr('src', response.data.new_file_url);
+                }
+    
+                compressImages(imageIds, replace);
+            } else {
+                alert(`Error: ${response.data.message}`);
+            }
+        });
+    };
+    
+    /**
+     * Select all checkboxes when the "Select All" checkbox is toggled.
+     */
+    $('#select-all').on('change', function () {
+        const isChecked = $(this).is(':checked');
+        $('.image-select').prop('checked', isChecked);
+        toggleBulkButtons();
+    });
+
+    /**
+     * Enable or disable bulk buttons based on selection.
+     */
+    const toggleBulkButtons = () => {
+        const hasSelection = $('.image-select:checked').length > 0;
+        $('#bulk-compress-btn, #bulk-replace-btn').prop('disabled', !hasSelection);
+    };
+
+    // Monitor individual checkbox changes
+    $(document).on('change', '.image-select', function () {
+        toggleBulkButtons();
+    });
+
+    // Update top bar initially
+    updateTopBar();
 });
 
 
@@ -408,6 +613,18 @@ jQuery(document).ready(function ($) {
     font-weight: bold;
     padding: 0 5px;
     color: #8C8627;
+}
+.table-wrapper {
+    overflow-x: auto;
+}
+
+#image-table {
+    width: 100%;
+    margin-top: 20px;
+}
+
+.compress-btn, .replace-btn {
+    margin: 5px;
 }
 
 
@@ -550,6 +767,28 @@ a[data-lightbox="image-preview"] img:hover {
     font-weight: bold;
     margin-left: 10px;
     color: #333;
+}
+/* Top Bar Styling */
+.top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: linear-gradient(145deg, #D9B036, #F28B30);
+    color: #FFFFFF; /* Ensures readability over the gradient */
+    font-weight: bold;
+    padding: 15px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    box-shadow: 5px 5px 10px #8C8627, -5px -5px 10px #D9B036; /* Matching shadow depth */
+}
+
+/* Styling for individual items in the top bar */
+.top-bar span {
+    font-size: 16px;
+    font-family: 'Arial', sans-serif;
+}
+.table-wrapper {
+    overflow-x: auto;
 }
 
 
