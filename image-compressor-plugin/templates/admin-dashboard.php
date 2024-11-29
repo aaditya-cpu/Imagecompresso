@@ -35,6 +35,7 @@
         <button id="bulk-replace-btn" disabled>Bulk Replace</button>
     </div>
 
+    <!-- Table Wrapper -->
     <div class="table-wrapper">
         <table id="image-table" class="display">
             <thead>
@@ -50,6 +51,7 @@
             </thead>
             <tbody>
                 <?php
+                // Query to fetch media library images
                 $args = [
                     'post_type'      => 'attachment',
                     'post_mime_type' => ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
@@ -59,6 +61,7 @@
 
                 $images = new WP_Query($args);
 
+                // Check if images exist
                 if ($images->have_posts()) :
                     while ($images->have_posts()) : $images->the_post();
                         $image_id = get_the_ID();
@@ -66,19 +69,21 @@
                         $image_path = get_attached_file($image_id);
                         $image_size = file_exists($image_path) ? filesize($image_path) : 0;
 
-                        // Sanitize and format values
+                        // Escape values for security
                         $image_url_esc = esc_url($image_url);
                         $image_title_esc = esc_html(get_the_title());
                         $image_size_human = size_format($image_size);
                 ?>
-                        <tr data-size="<?php echo $image_size; ?>">
-                            <td><input type="checkbox" class="image-select" data-id="<?php echo $image_id; ?>"></td>
+                        <tr data-size="<?php echo esc_attr($image_size); ?>">
                             <td>
-                                <a href="<?php echo $image_url_esc; ?>" data-lightbox="pre-compression-<?php echo $image_id; ?>" data-title="Original Image">
+                                <input type="checkbox" class="image-select" data-id="<?php echo esc_attr($image_id); ?>">
+                            </td>
+                            <td>
+                                <a href="<?php echo $image_url_esc; ?>" data-lightbox="pre-compression-<?php echo esc_attr($image_id); ?>" data-title="Original Image">
                                     <img src="<?php echo $image_url_esc; ?>" alt="Original Image" style="max-width: 100px;">
                                 </a>
                             </td>
-                            <td class="post-compression-preview-<?php echo $image_id; ?>">
+                            <td class="post-compression-preview-<?php echo esc_attr($image_id); ?>">
                                 <span>No compressed image yet.</span>
                             </td>
                             <td><?php echo $image_title_esc; ?></td>
@@ -87,11 +92,11 @@
                             <td>
                                 <div class="slider-container">
                                     <span class="slider-label">-</span>
-                                    <input type="range" id="quality-slider-<?php echo $image_id; ?>" min="10" max="100" value="80" class="quality-slider">
+                                    <input type="range" id="quality-slider-<?php echo esc_attr($image_id); ?>" min="10" max="100" value="80" class="quality-slider">
                                     <span class="slider-label">+</span>
                                 </div>
-                                <button class="compress-btn" data-id="<?php echo $image_id; ?>">Compress</button>
-                                <button class="replace-btn" data-id="<?php echo $image_id; ?>">Replace Original</button>
+                                <button class="compress-btn" data-id="<?php echo esc_attr($image_id); ?>">Compress</button>
+                                <button class="replace-btn" data-id="<?php echo esc_attr($image_id); ?>">Replace Original</button>
                             </td>
                         </tr>
                 <?php

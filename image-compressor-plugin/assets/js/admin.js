@@ -3,6 +3,13 @@ jQuery(document).ready(function ($) {
     const hideLoading = () => $('#loading-spinner').hide();
 
     /**
+     * Prevent duplicate dashboard rendering.
+     */
+    if ($('.image-compressor-dashboard').length > 1) {
+        $('.image-compressor-dashboard').slice(1).remove();
+    }
+
+    /**
      * Update the top bar with total size and saved space.
      */
     const updateTopBar = () => {
@@ -27,15 +34,10 @@ jQuery(document).ready(function ($) {
      * Format file size into human-readable format.
      */
     const size_format = (bytes) => {
-        if (bytes >= 1073741824) {
-            return (bytes / 1073741824).toFixed(2) + ' GB';
-        } else if (bytes >= 1048576) {
-            return (bytes / 1048576).toFixed(2) + ' MB';
-        } else if (bytes >= 1024) {
-            return (bytes / 1024).toFixed(2) + ' KB';
-        } else {
-            return bytes + ' bytes';
-        }
+        if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(2) + ' GB';
+        if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + ' MB';
+        if (bytes >= 1024) return (bytes / 1024).toFixed(2) + ' KB';
+        return bytes + ' bytes';
     };
 
     /**
@@ -43,7 +45,7 @@ jQuery(document).ready(function ($) {
      */
     const initializeTable = () => {
         if ($.fn.DataTable.isDataTable('#image-table')) {
-            $('#image-table').DataTable().destroy(); // Destroy previous instance
+            $('#image-table').DataTable().destroy();
         }
         $('#image-table').DataTable({
             paging: true,
@@ -56,13 +58,14 @@ jQuery(document).ready(function ($) {
 
     // Initialize DataTables on page load
     initializeTable();
+    updateTopBar();
 
     /**
      * Reinitialize DataTables and recalculate the top bar after updates.
      */
     const refreshUI = () => {
         updateTopBar();
-        initializeTable(); // Reinitialize the table
+        initializeTable();
     };
 
     /**
@@ -124,10 +127,10 @@ jQuery(document).ready(function ($) {
             refreshUI();
             return;
         }
-    
+
         const imageId = imageIds.shift();
         const quality = $('#master-quality-slider').val();
-    
+
         showLoading();
         $.post(imageCompressor.ajaxUrl, {
             action: 'compress_image',
@@ -140,24 +143,32 @@ jQuery(document).ready(function ($) {
             if (response.success) {
                 const newSize = size_format(response.data.new_size);
                 const savedSpace = size_format(response.data.saved_space);
-    
+
                 const row = $(`button[data-id=${imageId}]`).closest('tr');
                 row.find('.new-size').text(newSize);
-    
+
                 if (replace) {
                     // Update the "before" preview with the new image
                     const previewCell = row.find('a[data-lightbox^="pre-compression-"]');
                     previewCell.attr('href', response.data.new_file_url);
                     previewCell.find('img').attr('src', response.data.new_file_url);
+                } else {
+                    // Update the "after" preview
+                    const previewCell = row.find(`.post-compression-preview-${imageId}`);
+                    previewCell.html(`
+                        <a href="${response.data.new_file_url}" data-lightbox="post-compression-${imageId}" data-title="Compressed Image">
+                            <img src="${response.data.new_file_url}" alt="Compressed Image" style="max-width: 100px;">
+                        </a>
+                    `);
                 }
-    
+
                 compressImages(imageIds, replace);
             } else {
                 alert(`Error: ${response.data.message}`);
             }
         });
     };
-    
+
     /**
      * Select all checkboxes when the "Select All" checkbox is toggled.
      */
@@ -180,13 +191,6 @@ jQuery(document).ready(function ($) {
         toggleBulkButtons();
     });
 
-    /**
-     * Prevent multiple `.image-compressor-dashboard` instances.
-     */
-    if ($('.image-compressor-dashboard').length > 1) {
-        $('.image-compressor-dashboard').slice(1).remove();
-    }
-
-    // Update top bar initially
-    updateTopBar();
+    // Ensure all UI elements are refreshed on page load
+    refreshUI();
 });

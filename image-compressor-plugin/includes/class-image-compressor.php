@@ -35,45 +35,45 @@ class Image_Compressor {
 
         // Enqueue custom CSS for the plugin
         wp_enqueue_style(
-            'image-compressor-css', 
+            'image-compressor-css',
             IMAGE_COMPRESSOR_PLUGIN_URL . 'assets/css/admin.css'
         );
 
         // Enqueue custom JavaScript for the plugin
         wp_enqueue_script(
-            'image-compressor-js', 
-            IMAGE_COMPRESSOR_PLUGIN_URL . 'assets/js/admin.js', 
-            ['jquery'], 
-            null, 
+            'image-compressor-js',
+            IMAGE_COMPRESSOR_PLUGIN_URL . 'assets/js/admin.js',
+            ['jquery'],
+            null,
             true
         );
 
         // Enqueue Lightbox2 CSS via CDN
         wp_enqueue_style(
-            'lightbox-css', 
+            'lightbox-css',
             'https://cdn.jsdelivr.net/npm/lightbox2@2.11.5/dist/css/lightbox.min.css'
         );
 
         // Enqueue Lightbox2 JavaScript via CDN
         wp_enqueue_script(
-            'lightbox-js', 
-            'https://cdn.jsdelivr.net/npm/lightbox2@2.11.5/dist/js/lightbox.min.js', 
-            ['jquery'], 
-            null, 
+            'lightbox-js',
+            'https://cdn.jsdelivr.net/npm/lightbox2@2.11.5/dist/js/lightbox.min.js',
+            ['jquery'],
+            null,
             true
         );
 
         // Enqueue DataTables CSS and JS
         wp_enqueue_style(
-            'datatables-css', 
+            'datatables-css',
             'https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css'
         );
 
         wp_enqueue_script(
-            'datatables-js', 
-            'https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js', 
-            ['jquery'], 
-            null, 
+            'datatables-js',
+            'https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js',
+            ['jquery'],
+            null,
             true
         );
 
@@ -97,12 +97,6 @@ class Image_Compressor {
         ];
 
         $images = new WP_Query($args);
-
-        // Display a warning if no images are found
-        if (!$images->have_posts()) {
-            echo '<div class="notice notice-warning"><p>No images found in the media library.</p></div>';
-            return;
-        }
 
         // Include the dashboard template
         include IMAGE_COMPRESSOR_PLUGIN_DIR . 'templates/admin-dashboard.php';
