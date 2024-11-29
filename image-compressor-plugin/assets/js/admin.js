@@ -180,6 +180,13 @@ jQuery(document).ready(function ($) {
         toggleBulkButtons();
     });
 
+    /**
+     * Prevent multiple `.image-compressor-dashboard` instances.
+     */
+    if ($('.image-compressor-dashboard').length > 1) {
+        $('.image-compressor-dashboard').slice(1).remove();
+    }
+
     // Update top bar initially
     updateTopBar();
 });
